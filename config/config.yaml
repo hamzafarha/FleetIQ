@@ -1,0 +1,66 @@
+# Central config. src/ code should read from here, not hardcode values.
+# This is also the "data contract": what any dataset (prototyping or real)
+# must provide to be compatible with this pipeline.
+
+project:
+  name: smart-eta-prediction
+  stage: "1_problem_definition"   # bump as you move through the 10 stages
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  external_dir: data/external
+  models_dir: models
+  figures_dir: reports/figures
+
+# --- Prototyping dataset (NYC Taxi Trip Duration, Kaggle) ---
+dataset:
+  name: nyc_taxi_trip_duration
+  train_file: train.csv
+  test_file: test.csv
+
+  # Data contract: columns a dataset MUST provide for Case B (predict at
+  # trip start). When real company data arrives, map its schema onto
+  # these names here rather than changing src/ code.
+  required_columns:
+    pickup_datetime: pickup_datetime
+    pickup_longitude: pickup_longitude
+    pickup_latitude: pickup_latitude
+    dropoff_longitude: dropoff_longitude   # used to derive route distance only
+    dropoff_latitude: dropoff_latitude     # NOT a Case-B model input at inference time
+    passenger_count: passenger_count
+    vendor_id: vendor_id
+
+  target_column: trip_duration    # seconds in raw Kaggle data; convert to minutes in src/data
+
+  # Sanity bounds for validation (src/data/validate.py) — NYC-specific,
+  # revisit when swapping in another city / real company data.
+  coordinate_bounds:
+    lon_min: -74.3
+    lon_max: -73.7
+    lat_min: 40.5
+    lat_max: 40.9
+  trip_duration_bounds_seconds:
+    min: 30          # drop implausibly short trips
+    max: 14400        # drop implausibly long trips (4h)
+
+  gps_traces_available: false   # NYC Taxi Trip Duration = endpoints only, no polyline
+  fallback_trace_dataset: porto_taxi   # has polylines; use if GRU/LSTM branch is greenlit
+
+# --- Modeling (placeholders — do not finalize until Phase 6/7) ---
+modeling:
+  baseline:
+    method: historical_avg_speed_x_distance
+  gradient_boosting:
+    candidates: [xgboost, lightgbm]
+  deep_learning:
+    candidates: [gru, lstm, transformer]
+    static_branch: mlp
+
+split:
+  strategy: time_based    # avoid leakage; taxi demand is time-dependent
+  train_frac: 0.7
+  val_frac: 0.15
+  test_frac: 0.15
+  random_seed: 42

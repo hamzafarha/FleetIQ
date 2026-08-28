@@ -1,0 +1,33 @@
+# Data — never commit raw or processed data
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/external/.gitkeep
+
+# Trained model artifacts
+models/*
+!models/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Reports (regenerable)
+reports/figures/*
+!reports/figures/.gitkeep
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
