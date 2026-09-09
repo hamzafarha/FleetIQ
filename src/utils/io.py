@@ -7,7 +7,11 @@ from pathlib import Path
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+DEFAULT_CONFIG_PATH = (
+    PROJECT_ROOT / "configs" / "config.yaml"
+    if (PROJECT_ROOT / "configs" / "config.yaml").exists()
+    else PROJECT_ROOT / "config" / "config.yaml"
+)
 
 
 def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:

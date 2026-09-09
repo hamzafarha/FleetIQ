@@ -10,40 +10,44 @@ See [`docs/project_charter.md`](docs/project_charter.md) for the current
 problem definition, open questions, and decisions log — read that before
 touching code.
 
-## Project stages
+## Project stages & notebooks
 
-- [x] 1. Business understanding
-- [x] 2. Problem formulation *(target = trip duration, scenario = Case B)*
-- [ ] 3. Dataset design
-- [ ] 4. Feature engineering
-- [ ] 5. EDA
-- [ ] 6. Baseline modeling
-- [ ] 7. Advanced modeling
-- [ ] 8. Evaluation
-- [ ] 9. Deployment
-- [ ] 10. Monitoring
+- [x] `docs/project_charter.md`: Business understanding & problem formulation
+- [x] `notebooks/01_dataset_audit.ipynb`: NYC TLC raw data audit & feasibility check
+- [x] `notebooks/02_data_cleaning.ipynb`: Minimal cleaning rules & interim validation
+- [ ] `notebooks/03_dataset_design.ipynb`: Time-based train/val/test split
+- [ ] `notebooks/04_feature_engineering.ipynb`: Temporal, distance & rush-hour features
+- [ ] `notebooks/05_eda.ipynb`: Exploratory data analysis & feature distributions
+- [ ] `notebooks/06_baseline_modeling.ipynb`: Average speed heuristic baseline
+- [ ] `notebooks/07_advanced_modeling.ipynb`: Tabular models (RF, XGBoost, LightGBM, CatBoost)
+- [ ] `notebooks/08_evaluation.ipynb`: Final test evaluation, MAE/RMSE/R² & business gates
+- [x] `app.py`: Production FastAPI inference service with fallback routing
+- [x] `simulate_stream.py`: Real-time ride stream simulation & latency load test
 
 ## Repo layout
 
 ```
-config/             Data contracts, paths, hyperparameters (config.yaml)
+configs/            Data contracts, paths, hyperparameters (config.yaml)
 data/
   raw/              Immutable original data — never edited in place
   interim/          Intermediate cleaned data
   processed/        Final, model-ready datasets
   external/         Third-party data (traffic, weather, etc.)
 docs/               Project charter, decisions log, architecture notes
-notebooks/          One notebook per pipeline stage, numbered in order
+notebooks/          Sequential notebooks (01 to 08)
 src/
   data/             Loading, validation, train/val/test splitting
   features/         Feature engineering (distance, time features, etc.)
   models/           Baseline + trained model code
-  evaluation/        Metrics and evaluation harness
+  evaluation/       Metrics and evaluation harness
   utils/            Config loading, shared helpers
-models/             Serialized trained model artifacts (gitignored)
+models/             Serialized trained model artifacts
 reports/figures/    Generated plots for write-ups
-tests/              Unit tests for src/
-deployment/         Serving code (FastAPI stub, Dockerfile)
+tests/              Unit tests for src/ and app.py
+app.py              Production FastAPI serving endpoint
+simulate_stream.py  Streaming simulator
+Dockerfile          Inference API container definition
+Dockerfile.streamlit Streamlit dashboard container definition
 ```
 
 ## Setup

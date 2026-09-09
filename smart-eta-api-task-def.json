@@ -1,0 +1,43 @@
+{
+  "family": "smart-eta-api-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "containerDefinitions": [
+    {
+      "name": "smart-eta-api",
+      "image": "smart-eta-prediction/api:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        },
+        {
+          "name": "READ_ONLY_MODE",
+          "value": "true"
+        },
+        {
+          "name": "FALLBACK_ENABLED",
+          "value": "true"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/smart-eta-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ]
+}

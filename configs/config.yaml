@@ -1,0 +1,90 @@
+# Central config. src/ code should read from here, not hardcode values.
+# This is also the "data contract" adhering to SmartTaxi backend requirements.
+
+project:
+  name: smart-eta-prediction
+  stage: "2_modularization_and_scaffolding"
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  external_dir: data/external
+  models_dir: models
+  figures_dir: reports/figures
+  mlruns_dir: mlruns
+
+# --- Target Definitions ---
+targets:
+  primary: trip_duration
+  trip_duration:
+    description: "Passenger trip duration from pickup to dropoff"
+    unit: "minutes"
+    data_source: "nyc_tlc"
+  driver_pickup:
+    description: "Driver-to-passenger ETA until pickup arrival"
+    unit: "minutes"
+    data_source: "telemetry_dispatch_pending"
+    fallback_strategy: "routing_engine_or_speed_heuristic"
+
+# --- Prototyping dataset (NYC TLC Yellow Taxi) ---
+dataset:
+  name: nyc_tlc
+  raw_subpath: nyc_tlc
+  files:
+    - yellow_tripdata_2025-01.parquet
+    - yellow_tripdata_2025-04.parquet
+    - yellow_tripdata_2025-07.parquet
+    - yellow_tripdata_2025-10.parquet
+  zone_lookup_file: taxi_zone_lookup.csv
+
+  required_columns:
+    pickup_datetime: tpep_pickup_datetime
+    dropoff_datetime: tpep_dropoff_datetime
+    pickup_location_id: PULocationID
+    dropoff_location_id: DOLocationID
+    trip_distance: trip_distance
+    passenger_count: passenger_count
+
+  target_column: trip_duration_seconds
+
+  # Business thresholds & cleaning bounds
+  trip_duration_bounds_seconds:
+    min: 30             # drop trips shorter than 30s
+    max: 14400          # drop trips longer than 4 hours
+
+  trip_distance_bounds_miles:
+    min: 0.1
+    max: 100.0
+
+# --- SmartTaxi Backend Integration Rules ---
+backend_rules:
+  write_to_ride_table: false          # strictly read-only, NO direct DB writes
+  authoritative_timestamp_source: backend
+  simulate_traffic_if_missing: false  # do not silently impute traffic/weather
+  simulate_weather_if_missing: false
+  fallback_routing_speed_kmh: 25.0    # default urban speed for fallback calculation
+
+# --- Business Evaluation Thresholds ---
+business_metrics:
+  max_acceptable_mae_minutes: 3.5
+  min_acceptable_r2: 0.60
+  rush_hour_mae_tolerance_minutes: 4.5
+
+# --- Modeling Settings ---
+modeling:
+  baseline:
+    method: historical_avg_speed_x_distance
+    segmentation: [global, hour, rush_hour]
+  candidate_models:
+    - random_forest
+    - xgboost
+    - lightgbm
+    - catboost
+
+split:
+  strategy: time_based    # strictly time-based to prevent future leakage
+  train_frac: 0.70
+  val_frac: 0.15
+  test_frac: 0.15
+  random_seed: 42

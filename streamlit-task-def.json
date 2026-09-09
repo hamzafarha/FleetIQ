@@ -1,0 +1,35 @@
+{
+  "family": "smart-eta-streamlit-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "containerDefinitions": [
+    {
+      "name": "smart-eta-streamlit",
+      "image": "smart-eta-prediction/streamlit:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8501,
+          "hostPort": 8501,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "API_URL",
+          "value": "http://smart-eta-api.local:8000"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/smart-eta-streamlit",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "streamlit"
+        }
+      }
+    }
+  ]
+}

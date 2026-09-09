@@ -1,68 +1,56 @@
-# Project Charter — Smart Arrival Time Estimation
+# Project Charter — Smart Arrival Time Estimation (ETA)
 
-This file is the single source of truth for decisions made during Phase 1
-(Problem Definition). Update it as decisions are confirmed or revised —
-do not let scope decisions live only in chat history or notebooks.
+**Reference Document for SmartTaxi Central Backend Integration & Modeling Pipeline**
 
-## Status: Phase 1 (Problem Definition) — in progress
+## 1. Business Context & Mandate
+- **Company**: TSE Consultant INT / SmartTaxi Ecosystem
+- **Domain**: Taxi dispatch, passenger ride-hailing, dynamic fleet routing.
+- **Objective**: Build an end-to-end, production-ready ETA prediction system comparing tabular models (Baseline, Random Forest, XGBoost, LightGBM, CatBoost), exposed through a dedicated microservice with fallback capabilities.
 
-## 1. Business Context
-- **Company**: TSE Consultant INT
-- **Domain**: Taxi dispatch / passenger ETA
-- **Objective**: Build a production-quality ETA prediction system that
-  generalizes from a public prototyping dataset to real company data once
-  it becomes available.
+---
 
-## 2. Problem Formulation
-- **Primary target**: Trip duration (pickup → dropoff), in minutes.
-  Chosen for clean ground-truth computation, direct business value, and
-  alignment with public benchmarks (easy to validate the pipeline).
-- **Prediction scenario**: **Case B** — prediction at trip start.
-  Inputs available at prediction time: pickup location, destination,
-  start time.
-  - Case A (prediction at ride request, before pickup is guaranteed) is
-    explicitly a *different* ML problem — different feature availability,
-    different error tolerance, different downstream use. Not in scope
-    until Case B is validated end-to-end.
-- **Working problem statement**: *Given pickup location, destination, and
-  start time, predict trip duration in minutes to support passenger ETAs
-  and dispatcher planning.*
+## 2. Target Formulation & Roadmap
 
-## 3. Open Questions (blocking Phase 3+ decisions on real data)
-Track answers here as soon as they come back from the TSE supervisor.
+| Target Name | Business Scenario | Prototyping Feasibility | Production Endpoint | Fallback Strategy |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Passenger Trip Duration** *(Primary Model)* | Pickup $\rightarrow$ Dropoff duration (Case B) | **Ready**: NYC TLC 2025 Parquet provides pickup & dropoff timestamps. | `/predict/trip-duration` | Historical avg speed $\times$ distance |
+| **2. Driver-to-Passenger ETA** *(Secondary Model)* | Driver assignment $\rightarrow$ Arrival at passenger | **Pending Data**: TLC data lacks driver dispatch telemetry & pre-pickup GPS. | `/predict/driver-pickup` | Classical routing heuristic (25 km/h urban speed) |
 
-| Question | Why it matters | Status |
-|---|---|---|
-| Pickup ETA vs. trip ETA — which is the actual priority? | Determines whether Case A work is ever in scope | Open |
-| Are raw GPS traces available, or only origin-destination records? | Architectural fork: sequence models (GRU/LSTM) are only worth building if trace data exists | Open |
-| Trip volume / data size | Affects model complexity budget and infra choices | Open |
-| Can external traffic/weather data be integrated? | Affects feature engineering scope | Open |
+> [!IMPORTANT]
+> **Data Reality Check**: NYC TLC yellow taxi records provide passenger trip timestamps and zones, allowing immediate training of the **Trip Duration** model. Driver-to-passenger ETA is explicitly decoupled as a dedicated endpoint running in robust routing fallback mode until telemetry/dispatch logs are made available.
 
-## 4. Prototyping Strategy
-Real company data is not yet available. To avoid blocking progress:
-- **Prototyping dataset**: [NYC Taxi Trip Duration (Kaggle)](https://www.kaggle.com/c/nyc-taxi-trip-duration)
-  — chosen because its schema (pickup/dropoff lat-lon, timestamps,
-  passenger count, vendor id) is structurally close to what a real taxi
-  company would provide for Case B.
-- The pipeline (`src/`) is built against this dataset's schema but kept
-  structurally swappable — see `config/config.yaml` for the data contract
-  that a real dataset must satisfy to drop in without code changes.
-- Sequence-based branches (GRU/LSTM on GPS traces) are **not** built
-  against this dataset by default, since NYC Taxi Trip Duration does not
-  include raw GPS traces — only endpoints. That branch is deferred until
-  the GPS-trace question above is resolved. If it stays unresolved, the
-  Porto Taxi dataset (which does include trace polylines) is the fallback
-  for prototyping that branch specifically.
+---
 
-## 5. Modeling Progression (planned, not yet started)
-1. **Baseline**: historical average speed × route distance
-2. **Gradient boosting**: XGBoost / LightGBM on tabular + engineered features
-3. **Hybrid deep learning**: GRU/LSTM (sequence) + MLP (static features),
-   in the spirit of DeepTTE / WDR-style architectures, scoped down for
-   internship constraints. Transformer variant as a recurrence-free
-   alternative if time allows.
+## 3. SmartTaxi Backend Integration Rules
+To ensure seamless integration with the central backend:
 
-## 6. Explicit Non-Goals (for now)
-- Case A (request-time prediction) is not being designed in parallel.
-- No algorithm or code decisions are being finalized until data
-  availability (Section 3) is confirmed.
+1. **Zero Direct Writes**: The ML service never writes directly to the `Ride` table or any production state database.
+2. **Authoritative Timestamp Source**: All official ride state transitions and timestamps originate from the central backend.
+3. **No Silent Simulation**: If external traffic or weather feeds are absent, the service never silently fabricates values; it reports `traffic_included: false` and `weather_included: false`.
+4. **Standard API Contract**:
+   - `eta_seconds` (integer)
+   - `eta_minutes` (float for dispatch and passenger UI)
+   - `model_version`
+   - `quality_flag` (`HIGH_CONFIDENCE`, `ESTIMATED`, `FALLBACK_ROUTING`, `DEGRADED`)
+   - `target_type`
+5. **Fallback Mandate**: If the model fails, degrades, or inputs are out-of-distribution, classical routing speed heuristics return an actionable fallback ETA rather than throwing an unhandled service outage.
+
+---
+
+## 4. Modeling Progression & Comparison
+1. **Baseline**: Heuristic average speed $\times$ route distance (segmented by global and hour-of-day).
+2. **Tabular Models**:
+   - Random Forest Regressor
+   - XGBoost Regressor
+   - LightGBM Regressor
+   - CatBoost Regressor
+3. **Evaluation Metrics**:
+   - **MAE** (in minutes and seconds for business stakeholders)
+   - **RMSE** (penalizes large unexpected estimation delays)
+   - **R²** (variance explained)
+   - **MAPE** (relative percentage accuracy)
+4. **Business Acceptance Thresholds**:
+   - Overall MAE: $\le 3.5$ minutes.
+   - Rush Hour MAE Tolerance: $\le 4.5$ minutes.
+   - Target $R^2$: $\ge 0.60$.
+5. **Split Strategy**: Strictly time-based (e.g., 70% train / 15% val / 15% test) to prevent temporal data leakage.
