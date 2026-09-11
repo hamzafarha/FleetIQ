@@ -271,7 +271,7 @@ elif nav == "2. Approche Chauffeur (Driver Pickup)":
             st.success("✅ Estimation d'Approche Calculée")
             r1, r2, r3 = st.columns(3)
             r1.metric("Temps d'Approche (ETA)", f"{data['eta_minutes']} min", f"{data['eta_seconds']} sec")
-            r2.metric("Distance Chauffeur $\rightarrow$ Client", f"{data['distance_km']} km")
+            r2.metric("Distance Chauffeur → Client", f"{data['distance_km']} km")
             r3.metric("Statut Moteur", data["quality_flag"])
             st.info(
                 "ℹ️ Fonctionne en mode Fallback Routier Urbain Calibré. "
@@ -324,13 +324,13 @@ elif nav == "3. Benchmark & Comparaison Modèles":
         tab_g1, tab_g2, tab_g3 = st.tabs(["Benchmark MAE & R²", "Importance des Features", "Analyse par Sous-Groupes"])
         with tab_g1:
             if fig1_path.exists():
-                st.image(str(fig1_path), use_column_width=True)
+                st.image(str(fig1_path), use_container_width=True)
         with tab_g2:
             if fig2_path.exists():
-                st.image(str(fig2_path), use_column_width=True)
+                st.image(str(fig2_path), use_container_width=True)
         with tab_g3:
             if fig3_path.exists():
-                st.image(str(fig3_path), use_column_width=True)
+                st.image(str(fig3_path), use_container_width=True)
     else:
         st.warning("Aucun résultat de benchmark trouvé dans `models/model_comparison_results.json`.")
 
