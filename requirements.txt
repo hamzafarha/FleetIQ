@@ -13,6 +13,8 @@ jupyter==1.0.0
 scikit-learn==1.4.2
 xgboost==2.0.3
 lightgbm==4.3.0
+catboost==1.2.10
+joblib==1.4.2
 
 # Deep learning (Phase 7)
 torch==2.3.0
