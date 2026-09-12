@@ -116,6 +116,8 @@ def test_predict_trip_duration_rush_hour_vs_offpeak():
 
     assert rush_resp["eta_seconds"] > 0
     assert night_resp["eta_seconds"] > 0
+    # Strict rush-hour differentiation: rush hour ETA must exceed late night ETA
+    assert rush_resp["eta_seconds"] > night_resp["eta_seconds"]
 
 
 def test_predict_missing_optional_data_no_fake_simulation():

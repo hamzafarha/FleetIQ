@@ -201,8 +201,6 @@ def predict_trip_duration(payload: ETAPredictionRequest):
             )
             raw_pred_min = float(champion_model.predict(features_df)[0])
             pred_min = max(1.0, round(raw_pred_min, 2))
-            eta_sec = max(60, int(round(pred_min * 60.0)))
-            eta_min = pred_min
             used_fallback = False
             quality = QualityFlag.HIGH_CONFIDENCE
             active_version = MODEL_VERSION
@@ -212,9 +210,26 @@ def predict_trip_duration(payload: ETAPredictionRequest):
     if used_fallback:
         adjusted_speed = (FALLBACK_SPEED_KMH * 0.75) if is_rush_hour else FALLBACK_SPEED_KMH
         eta_sec = calculate_fallback_eta_seconds(dist_km, speed_kmh=adjusted_speed)
-        eta_min = round(eta_sec / 60.0, 2)
+        pred_min = round(eta_sec / 60.0, 2)
         active_version = "fallback_routing_speed_v1"
         quality = QualityFlag.FALLBACK_ROUTING
+
+    # Dynamic contextual adjustment if verified real-time feeds are supplied
+    traffic_factor = (1.0 + float(payload.traffic_density) * 0.45) if payload.traffic_density is not None else 1.0
+    weather_factor = 1.0
+    if payload.weather_condition is not None:
+        w = payload.weather_condition.lower()
+        if "rain" in w or "pluie" in w:
+            weather_factor = 1.15
+        elif "snow" in w or "neige" in w or "storm" in w:
+            weather_factor = 1.25
+        elif "fog" in w or "brouillard" in w:
+            weather_factor = 1.10
+
+    total_context_mult = traffic_factor * weather_factor
+    pred_min = max(1.0, round(pred_min * total_context_mult, 2))
+    eta_sec = max(60, int(round(pred_min * 60.0)))
+    eta_min = pred_min
 
     latency = round((time.perf_counter() - start_time) * 1000, 2)
 

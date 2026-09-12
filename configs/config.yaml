@@ -57,13 +57,49 @@ dataset:
     min: 0.1
     max: 100.0
 
+# --- Market & Regional Calibration (Tunisian Deployment) ---
+market:
+  name: "tunisia"
+  target_region: "Grand Tunis"
+  currency: "TND"
+  timezone: "Africa/Tunis"
+  supported_governorates:
+    - "Tunis"
+    - "Ariana"
+    - "Ben Arous"
+    - "La Manouba"
+  expansion_governorates:
+    - "Sfax"
+    - "Sousse"
+
+  geographical_bounds:
+    lat_min: 36.7500  # Sud Tunis / Ben Arous / Rades
+    lat_max: 36.9150  # Ariana / Raoued / La Marsa / Gammarth
+    lon_min: 10.1000  # Le Bardo / Manouba
+    lon_max: 10.3400  # La Goulette / Carthage / La Marsa
+
+  urban_speed_profiles_kmh:
+    dense_downtown: 18.0     # Centre-Ville, Lafayette, Médina (congestion forte)
+    standard_urban: 25.0     # Ennasr, Menzah, Bardo, Lac 1
+    expressway: 55.0         # Voies rapides (Route de la Marsa, X20, GP8, Z4)
+    highway: 80.0            # Autoroute A1 (Sud) / A4 (Bizerte)
+
+  temporal_patterns:
+    morning_peak_hours: [7, 8, 9]        # 07h30 - 09h00 (Bureaux & universités)
+    lunch_peak_hours: [12, 13]           # 12h30 - 14h00 (Régime double séance)
+    evening_peak_hours: [17, 18, 19]     # 17h00 - 19h00 (Sortie des bureaux)
+    ramadan_pre_iftar_peak: [16, 17, 18] # Congestion extrême pré-rupture du jeûne
+    rush_hour_speed_penalty_pct: 35.0    # Réduction de vitesse en pointe (-35%)
+
 # --- SmartTaxi Backend Integration Rules ---
 backend_rules:
   write_to_ride_table: false          # strictly read-only, NO direct DB writes
   authoritative_timestamp_source: backend
   simulate_traffic_if_missing: false  # do not silently impute traffic/weather
   simulate_weather_if_missing: false
-  fallback_routing_speed_kmh: 25.0    # default urban speed for fallback calculation
+  fallback_routing_speed_kmh: 25.0    # default urban speed for fallback calculation (Grand Tunis standard)
+  fallback_rush_hour_speed_kmh: 18.0  # fallback speed during heavy rush hours
+  fallback_expressway_speed_kmh: 55.0 # fallback speed for suburban/expressway routes
 
 # --- Business Evaluation Thresholds ---
 business_metrics:
