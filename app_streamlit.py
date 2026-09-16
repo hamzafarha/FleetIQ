@@ -119,12 +119,27 @@ def render_directional_route_map(
 
     # Draw the OSRM road geometry instead of connecting endpoints directly.
     road_path = route_geometry or [[start_lon, start_lat], [end_lon, end_lat]]
+    route_outline_layer = pdk.Layer(
+        "PathLayer",
+        data=[{"path": road_path}],
+        get_path="path",
+        get_color=[255, 255, 255, 230],
+        get_width=10,
+        width_min_pixels=8,
+        width_max_pixels=14,
+        joint_rounded=True,
+        cap_rounded=True,
+    )
     line_layer = pdk.Layer(
         "PathLayer",
         data=[{"path": road_path}],
         get_path="path",
         get_color=[37, 99, 235, 230],  # Royal Blue
-        get_width=5,
+        get_width=6,
+        width_min_pixels=5,
+        width_max_pixels=10,
+        joint_rounded=True,
+        cap_rounded=True,
     )
 
     # Directional arrows follow the local tangent of the road geometry.
@@ -179,7 +194,7 @@ def render_directional_route_map(
     )
 
     deck = pdk.Deck(
-        layers=[line_layer, arrow_layer, points_layer, text_layer],
+        layers=[route_outline_layer, line_layer, arrow_layer, points_layer, text_layer],
         initial_view_state=pdk.ViewState(
             latitude=mid_lat,
             longitude=mid_lon,
