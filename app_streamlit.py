@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import importlib
 from pathlib import Path
 import time
 from typing import Any, Dict
@@ -618,7 +619,10 @@ elif nav == "4. Simulateur Streaming Temps Réel":
         reg_key = "tunis" if "Tunis" in sim_region else "nyc"
 
     if st.button("🚀 Démarrer la Simulation", type="primary", use_container_width=True):
-        from simulate_stream import generate_random_ride
+        import simulate_stream
+
+        importlib.reload(simulate_stream)
+        generate_random_ride = simulate_stream.generate_random_ride
 
         progress_bar = st.progress(0)
         logs = []
@@ -664,7 +668,7 @@ elif nav == "4. Simulateur Streaming Temps Réel":
                     }
                 )
 
-            table_placeholder.dataframe(pd.DataFrame(logs), use_container_width=True)
+            table_placeholder.table(pd.DataFrame(logs))
             progress_bar.progress(i / n_events)
             time.sleep(interval)
 

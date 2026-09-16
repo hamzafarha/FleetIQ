@@ -19,13 +19,21 @@ NYC_BOUNDS = {
     "lon_max": -73.85,
 }
 
+TUNIS_BOUNDS = {
+    "lat_min": 36.75,
+    "lat_max": 36.92,
+    "lon_min": 10.10,
+    "lon_max": 10.38,
+}
 
-def generate_random_ride(ride_id: int) -> dict:
-    """Generate a realistic synthetic ride request inside the NYC metro area."""
-    p_lat = round(random.uniform(NYC_BOUNDS["lat_min"], NYC_BOUNDS["lat_max"]), 6)
-    p_lon = round(random.uniform(NYC_BOUNDS["lon_min"], NYC_BOUNDS["lon_max"]), 6)
-    d_lat = round(random.uniform(NYC_BOUNDS["lat_min"], NYC_BOUNDS["lat_max"]), 6)
-    d_lon = round(random.uniform(NYC_BOUNDS["lon_min"], NYC_BOUNDS["lon_max"]), 6)
+
+def generate_random_ride(ride_id: int, region: str = "nyc") -> dict:
+    """Generate a synthetic ride request for NYC or Grand Tunis."""
+    bounds = TUNIS_BOUNDS if region.lower() in {"tunis", "tunisia"} else NYC_BOUNDS
+    p_lat = round(random.uniform(bounds["lat_min"], bounds["lat_max"]), 6)
+    p_lon = round(random.uniform(bounds["lon_min"], bounds["lon_max"]), 6)
+    d_lat = round(random.uniform(bounds["lat_min"], bounds["lat_max"]), 6)
+    d_lon = round(random.uniform(bounds["lon_min"], bounds["lon_max"]), 6)
 
     return {
         "ride_id": f"ride_{ride_id:04d}",
