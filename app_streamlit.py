@@ -293,7 +293,6 @@ nav = st.sidebar.radio(
         "3. Benchmark & Comparaison Modèles",
         "4. Simulateur Streaming Temps Réel",
         "5. Gouvernance & Contrat Backend",
-        "6. Marché Tunisien & Télémétrie Flotte",
     ],
 )
 
@@ -710,105 +709,4 @@ elif nav == "5. Gouvernance & Contrat Backend":
     )
     st.markdown("Consultez le rapport complet dans `reports/rapport_integration_eta_smarttaxi.md`.")
 
-# --- PAGE 6: MARCHÉ TUNISIEN & TÉLÉMÉTRIE FLOTTE ---
-elif nav == "6. Marché Tunisien & Télémétrie Flotte":
-    st.title("🇹🇳 Marché Tunisien — Routage Réseau & Télémétrie Flotte")
-    st.markdown(
-        """
-        Gestion de la transition opérationnelle : **Résolution du démarrage à froid (Cold-Start)**, 
-        routage OpenStreetMap OSRM sur Grand Tunis et journalisation passive des courses réelles.
-        """
-    )
-
-    t_col1, t_col2 = st.columns([1, 1])
-
-    with t_col1:
-        st.subheader("1. Architecture Hybride pour Grand Tunis")
-        st.markdown(
-            """
-            - **Tier 1 (Routage Réseau OSRM) :** Calcul de la trajectoire routière réelle et de la distance réseau sur les axes tunisiens (Route de La Marsa RN9, Voie X, Lac, etc.) avec fallback tortuosité $\\times 1.35$.
-            - **Tier 2 (Modèle ML Adapté) :** Modèle LightGBM entraîné sur le graphe de congestion de Grand Tunis (pics 07h30–09h00, 12h30–14h00, 17h00–19h00).
-            - **Cold-Start Resolver :** Logging passif des courses terminées pour ré-entraînement continu.
-            """
-        )
-
-        # Telemetry Stats from API
-        st.markdown("---")
-        st.subheader("2. État du Collecteur Télémétrique")
-        try:
-            t_resp = requests.get(f"{api_base}/telemetry/stats", timeout=1.5)
-            if t_resp.status_code == 200:
-                stats = t_resp.json()
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Courses Enregistrées", stats.get("total_rides_logged", 0))
-                m2.metric("MAE Moyenne", f"{stats.get('mean_mae_minutes', 0.0)} min")
-                ready = stats.get("ready_for_fine_tuning", False)
-                m3.metric("Statut Ré-entraînement", "Prêt" if ready else "En Collecte")
-                st.caption(f"Seuil requis pour ré-entraînement : {stats.get('threshold_for_retraining', 500)} courses réelles.")
-            else:
-                st.info("API connectée mais statistiques télémétriques indisponibles.")
-        except Exception:
-            st.info("Lancez l'API FastAPI (`uvicorn app:app`) pour visualiser les statistiques de télémétrie en direct.")
-
-    with t_col2:
-        st.subheader("3. Modèle Adapté Tunisie (Benchmark)")
-        tn_model_res_file = Path("models/tunisia_model_results.json")
-        if tn_model_res_file.exists():
-            with open(tn_model_res_file, "r", encoding="utf-8") as f:
-                tn_results = json.load(f)
-            st.success(f"Champion Local : **{tn_results.get('champion_model')}**")
-            results_data = tn_results.get("results", {})
-            df_tn = pd.DataFrame([
-                {
-                    "Modèle": m,
-                    "MAE (min)": res["mae_minutes"],
-                    "MAE (sec)": res["mae_seconds"],
-                    "RMSE (min)": res["rmse_minutes"],
-                    "R² Score": res["r2"],
-                }
-                for m, res in results_data.items()
-            ])
-            st.dataframe(df_tn, use_container_width=True)
-        else:
-            st.info("Générez le modèle adapté via `python scripts/train_tunisia_adapter.py`.")
-
-        st.markdown("---")
-        st.subheader("4. Simuler l'enregistrement d'une course réelle")
-        with st.form("log_ride_form"):
-            sim_p = st.selectbox("Départ", list(PRESET_LOCATIONS.keys()), index=0)
-            sim_d = st.selectbox("Arrivée", list(PRESET_LOCATIONS.keys()), index=4)
-            sim_dur = st.number_input("Durée Réelle Constatée (secondes)", value=950, min_value=60, step=30)
-            sim_pred = st.number_input("ETA qui avait été prédit (secondes)", value=920, min_value=60, step=30)
-            submit_log = st.form_submit_button("📥 Enregistrer dans la base télémétrique")
-
-            if submit_log:
-                p_coords = PRESET_LOCATIONS[sim_p]
-                d_coords = PRESET_LOCATIONS[sim_d]
-                log_pld = {
-                    "pickup_latitude": p_coords[0],
-                    "pickup_longitude": p_coords[1],
-                    "dropoff_latitude": d_coords[0],
-                    "dropoff_longitude": d_coords[1],
-                    "actual_duration_seconds": int(sim_dur),
-                    "predicted_duration_seconds": int(sim_pred),
-                    "routing_engine": "osrm_openstreetmap",
-                }
-                try:
-                    res_log = requests.post(f"{api_base}/telemetry/log-completed-ride", json=log_pld, timeout=2.0)
-                    if res_log.status_code == 200:
-                        st.success(f"Course enregistrée avec succès ! (ID: {res_log.json().get('ride_id')})")
-                    else:
-                        st.error(f"Erreur enregistrement : {res_log.text}")
-                except Exception as e:
-                    # Fallback log directly
-                    from src.data.telemetry_collector import log_completed_ride
-                    res_dir = log_completed_ride(
-                        pickup_latitude=p_coords[0],
-                        pickup_longitude=p_coords[1],
-                        dropoff_latitude=d_coords[0],
-                        dropoff_longitude=d_coords[1],
-                        actual_duration_seconds=int(sim_dur),
-                        predicted_duration_seconds=int(sim_pred),
-                    )
-                    st.success(f"Course journalisée en mode autonome local ! (ID: {res_dir['ride_id']})")
 
