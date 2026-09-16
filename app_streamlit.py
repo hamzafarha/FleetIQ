@@ -559,7 +559,7 @@ elif nav == "3. Benchmark & Comparaison Modèles":
             )
 
         df_bench = pd.DataFrame(table_rows)
-        st.dataframe(df_bench, use_container_width=True)
+        st.table(df_bench)
 
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         champ = benchmark_data.get("champion_model", "Random Forest")
