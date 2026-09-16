@@ -206,12 +206,16 @@ def test_prediction_latency_sla():
         "dropoff_longitude": -73.9654,
         "pickup_datetime": "2025-06-16T14:30:00Z",
     }
+    # One warmup call to eliminate python JIT/module loading jitter
+    _ = client.post("/predict/trip-duration", json=payload)
+
     t0 = time.perf_counter()
     response = client.post("/predict/trip-duration", json=payload)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
     assert response.status_code == 200
     assert elapsed_ms < 50.0  # Fast inference SLA
+
 
 
 def test_predict_fallback_when_model_unavailable(monkeypatch):

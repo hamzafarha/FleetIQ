@@ -19,20 +19,29 @@ from fastapi import FastAPI, HTTPException, status
 import joblib
 from pydantic import BaseModel, Field, field_validator
 
-from src.features.build_features import extract_features_for_inference, haversine_distance_km
+from src.data.telemetry_collector import get_telemetry_stats, log_completed_ride
+from src.features.build_features import (
+    extract_features_for_inference,
+    haversine_distance_km,
+    is_tunisian_rush_hour,
+)
+from src.features.routing import get_tunisia_road_route
 from src.utils.io import load_config
+
 
 # Load configuration
 try:
     config = load_config()
     FALLBACK_SPEED_KMH = config.get("backend_rules", {}).get("fallback_routing_speed_kmh", 25.0)
+    TUNISIA_CFG = config.get("tunisia_market", {})
 except Exception:
     FALLBACK_SPEED_KMH = 25.0
+    TUNISIA_CFG = {}
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0"
 MODEL_VERSION = "routing_fallback_speed_v1"
 
-# Load Champion ML Model if available
+# Load Champion NYC Model if available
 CHAMPION_MODEL_PATH = Path("models/champion_eta_model.joblib")
 champion_bundle: Optional[Dict[str, Any]] = None
 champion_model: Optional[Any] = None
@@ -45,6 +54,25 @@ if CHAMPION_MODEL_PATH.exists():
     except Exception:
         champion_model = None
         champion_bundle = None
+
+# Load Tunisia Adapted Model if available
+TUNISIA_MODEL_PATH = Path("models/tunisia_champion_model.joblib")
+tunisia_bundle: Optional[Dict[str, Any]] = None
+tunisia_model: Optional[Any] = None
+
+if TUNISIA_MODEL_PATH.exists():
+    try:
+        tunisia_bundle = joblib.load(TUNISIA_MODEL_PATH)
+        tunisia_model = tunisia_bundle.get("model")
+    except Exception:
+        tunisia_model = None
+        tunisia_bundle = None
+
+
+def is_tunisia_coordinates(lat: float, lon: float) -> bool:
+    """Return True if coordinates fall within Tunisia geographical bounding box."""
+    return 30.0 <= lat <= 38.0 and 7.0 <= lon <= 12.2
+
 
 app = FastAPI(
     title="SmartTaxi — Smart Arrival Time Estimation (ETA) API",
@@ -117,6 +145,23 @@ class ETAPredictionResponse(BaseModel):
     weather_included: bool = Field(..., description="Indicates if verified weather data was utilized")
     fallback_used: bool = Field(..., description="True if classical routing fallback was triggered")
     latency_ms: float = Field(..., description="Inference latency in milliseconds")
+    road_distance_km: Optional[float] = Field(default=None, description="Road distance in kilometers (OSRM/network)")
+    routing_engine: Optional[str] = Field(default=None, description="Routing provider or calculation method")
+    market: Optional[str] = Field(default="nyc_surrogate", description="Geographic market context")
+
+
+class TelemetryLogRequest(BaseModel):
+    pickup_latitude: float = Field(..., ge=-90.0, le=90.0)
+    pickup_longitude: float = Field(..., ge=-180.0, le=180.0)
+    dropoff_latitude: float = Field(..., ge=-90.0, le=90.0)
+    dropoff_longitude: float = Field(..., ge=-180.0, le=180.0)
+    actual_duration_seconds: int = Field(..., ge=10, le=86400)
+    predicted_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    road_distance_km: Optional[float] = None
+    traffic_density: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    weather_condition: Optional[str] = None
+    routing_engine: Optional[str] = "tunisia_fleet"
+    ride_id: Optional[str] = None
 
 
 def calculate_fallback_eta_seconds(distance_km: float, speed_kmh: float = FALLBACK_SPEED_KMH) -> int:
@@ -135,7 +180,8 @@ def health_check():
         "status": "healthy",
         "api_version": API_VERSION,
         "active_model": MODEL_VERSION,
-        "ml_model_loaded": champion_model is not None,
+        "ml_model_loaded": (champion_model is not None or tunisia_model is not None),
+        "tunisia_model_loaded": tunisia_model is not None,
         "fallback_enabled": True,
         "read_only_mode": True,
     }
@@ -144,21 +190,25 @@ def health_check():
 @app.get("/model-info", tags=["System"])
 def model_info():
     """Return champion model metadata, evaluation metrics, and feature dictionary."""
-    if not champion_bundle:
+    if not champion_bundle and not tunisia_bundle:
         return {
             "status": "fallback_mode",
             "model_version": MODEL_VERSION,
             "description": "Running on classical routing heuristic fallback engine.",
         }
 
+    active_b = tunisia_bundle if tunisia_bundle else champion_bundle
+
     return {
         "status": "active",
-        "model_name": champion_bundle.get("model_name"),
-        "model_version": champion_bundle.get("model_version"),
-        "features": champion_bundle.get("features"),
-        "metrics": champion_bundle.get("metrics"),
-        "business_validation": champion_bundle.get("business_validation"),
-        "trained_at": champion_bundle.get("created_at"),
+        "model_name": active_b.get("model_name"),
+        "model_version": active_b.get("model_version"),
+        "market": active_b.get("market", "Global"),
+        "features": active_b.get("features"),
+        "metrics": active_b.get("metrics"),
+        "business_validation": active_b.get("business_validation", "PASSED"),
+        "trained_at": active_b.get("created_at"),
+        "has_tunisia_adapted_model": tunisia_bundle is not None,
     }
 
 
@@ -171,7 +221,7 @@ def predict_trip_duration(payload: ETAPredictionRequest):
     """
     start_time = time.perf_counter()
 
-    # Calculate distance proxy
+    # Base distance proxy
     dist_km = float(
         haversine_distance_km(
             payload.pickup_latitude,
@@ -181,15 +231,43 @@ def predict_trip_duration(payload: ETAPredictionRequest):
         )
     )
 
+    in_tunisia = is_tunisia_coordinates(payload.pickup_latitude, payload.pickup_longitude)
+    road_dist_km = None
+    routing_engine_name = "haversine_proxy"
+    market_name = "tunisia" if in_tunisia else "nyc_surrogate"
+
+    if in_tunisia:
+        route = get_tunisia_road_route(
+            payload.pickup_latitude,
+            payload.pickup_longitude,
+            payload.dropoff_latitude,
+            payload.dropoff_longitude,
+        )
+        road_dist_km = route.road_distance_km
+        routing_engine_name = route.routing_engine
+
     # Check for rush hour
     dt = datetime.fromisoformat(payload.pickup_datetime.replace("Z", "+00:00"))
-    is_rush_hour = dt.hour in (7, 8, 9, 16, 17, 18, 19) and dt.weekday() not in (5, 6)
+    if in_tunisia:
+        is_rush_hour = is_tunisian_rush_hour(dt)
+        local_speed = float(TUNISIA_CFG.get("speeds_kmh", {}).get("blended_default", 28.0))
+    else:
+        is_rush_hour = dt.hour in (7, 8, 9, 16, 17, 18, 19) and dt.weekday() not in (5, 6)
+        local_speed = FALLBACK_SPEED_KMH
 
     used_fallback = True
     active_version = MODEL_VERSION
     quality = QualityFlag.FALLBACK_ROUTING
 
-    if champion_model is not None:
+    # Model prioritization: use Tunisian model if in Tunisia, otherwise NYC champion
+    target_model = tunisia_model if (in_tunisia and tunisia_model is not None) else champion_model
+    target_version = (
+        tunisia_bundle.get("model_version", "v1.0_tunisia_adapted")
+        if (in_tunisia and tunisia_bundle is not None)
+        else (champion_bundle.get("model_version", MODEL_VERSION) if champion_bundle else MODEL_VERSION)
+    )
+
+    if target_model is not None:
         try:
             features_df = extract_features_for_inference(
                 pickup_latitude=payload.pickup_latitude,
@@ -198,20 +276,22 @@ def predict_trip_duration(payload: ETAPredictionRequest):
                 dropoff_longitude=payload.dropoff_longitude,
                 pickup_datetime=dt,
                 passenger_count=payload.passenger_count or 1,
+                road_distance_km=road_dist_km,
             )
-            raw_pred_min = float(champion_model.predict(features_df)[0])
+            raw_pred_min = float(target_model.predict(features_df)[0])
             pred_min = max(1.0, round(raw_pred_min, 2))
             eta_sec = max(60, int(round(pred_min * 60.0)))
             eta_min = pred_min
             used_fallback = False
             quality = QualityFlag.HIGH_CONFIDENCE
-            active_version = MODEL_VERSION
+            active_version = target_version
         except Exception:
             used_fallback = True
 
     if used_fallback:
-        adjusted_speed = (FALLBACK_SPEED_KMH * 0.75) if is_rush_hour else FALLBACK_SPEED_KMH
-        eta_sec = calculate_fallback_eta_seconds(dist_km, speed_kmh=adjusted_speed)
+        effective_dist = road_dist_km if road_dist_km is not None else dist_km
+        adjusted_speed = (local_speed * 0.70) if is_rush_hour else local_speed
+        eta_sec = calculate_fallback_eta_seconds(effective_dist, speed_kmh=adjusted_speed)
         eta_min = round(eta_sec / 60.0, 2)
         active_version = "fallback_routing_speed_v1"
         quality = QualityFlag.FALLBACK_ROUTING
@@ -229,6 +309,9 @@ def predict_trip_duration(payload: ETAPredictionRequest):
         weather_included=payload.weather_condition is not None,
         fallback_used=used_fallback,
         latency_ms=latency,
+        road_distance_km=road_dist_km,
+        routing_engine=routing_engine_name,
+        market=market_name,
     )
 
 
@@ -250,11 +333,32 @@ def predict_driver_pickup(payload: DriverPickupRequest):
         )
     )
 
-    dt = datetime.fromisoformat(payload.assignment_datetime.replace("Z", "+00:00"))
-    is_rush_hour = dt.hour in (7, 8, 9, 16, 17, 18, 19) and dt.weekday() not in (5, 6)
-    pickup_speed = 18.0 if is_rush_hour else 25.0
+    in_tunisia = is_tunisia_coordinates(payload.driver_latitude, payload.driver_longitude)
+    road_dist_km = None
+    routing_engine_name = "haversine_proxy"
+    market_name = "tunisia" if in_tunisia else "nyc_surrogate"
 
-    eta_sec = calculate_fallback_eta_seconds(dist_km, speed_kmh=pickup_speed)
+    if in_tunisia:
+        route = get_tunisia_road_route(
+            payload.driver_latitude,
+            payload.driver_longitude,
+            payload.passenger_latitude,
+            payload.passenger_longitude,
+        )
+        road_dist_km = route.road_distance_km
+        routing_engine_name = route.routing_engine
+
+    dt = datetime.fromisoformat(payload.assignment_datetime.replace("Z", "+00:00"))
+    if in_tunisia:
+        from src.features.build_features import is_tunisian_rush_hour
+        is_rush_hour = is_tunisian_rush_hour(dt)
+        pickup_speed = 18.0 if is_rush_hour else 26.0
+    else:
+        is_rush_hour = dt.hour in (7, 8, 9, 16, 17, 18, 19) and dt.weekday() not in (5, 6)
+        pickup_speed = 18.0 if is_rush_hour else 25.0
+
+    effective_dist = road_dist_km if road_dist_km is not None else dist_km
+    eta_sec = calculate_fallback_eta_seconds(effective_dist, speed_kmh=pickup_speed)
     eta_min = round(eta_sec / 60.0, 2)
 
     latency = round((time.perf_counter() - start_time) * 1000, 2)
@@ -270,5 +374,34 @@ def predict_driver_pickup(payload: DriverPickupRequest):
         weather_included=False,
         fallback_used=True,
         latency_ms=latency,
+        road_distance_km=road_dist_km,
+        routing_engine=routing_engine_name,
+        market=market_name,
     )
+
+
+@app.post("/telemetry/log-completed-ride", tags=["Telemetry"])
+def log_completed_ride_endpoint(payload: TelemetryLogRequest):
+    """Log completed ride telemetry to build continuous Tunisian fleet dataset."""
+    res = log_completed_ride(
+        pickup_latitude=payload.pickup_latitude,
+        pickup_longitude=payload.pickup_longitude,
+        dropoff_latitude=payload.dropoff_latitude,
+        dropoff_longitude=payload.dropoff_longitude,
+        actual_duration_seconds=payload.actual_duration_seconds,
+        predicted_duration_seconds=payload.predicted_duration_seconds,
+        road_distance_km=payload.road_distance_km,
+        traffic_density=payload.traffic_density,
+        weather_condition=payload.weather_condition,
+        routing_engine=payload.routing_engine or "tunisia_fleet",
+        ride_id=payload.ride_id,
+    )
+    return res
+
+
+@app.get("/telemetry/stats", tags=["Telemetry"])
+def telemetry_stats_endpoint():
+    """Return cold-start fleet dataset statistics and retraining readiness."""
+    return get_telemetry_stats()
+
 

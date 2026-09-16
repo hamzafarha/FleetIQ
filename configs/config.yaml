@@ -88,3 +88,29 @@ split:
   val_frac: 0.15
   test_frac: 0.15
   random_seed: 42
+
+# --- Tunisia Market & Cold-Start Adaptation ---
+tunisia_market:
+  enabled: true
+  region: "Grand Tunis"
+  routing:
+    osrm_url: "https://router.project-osrm.org/route/v1/driving"
+    timeout_seconds: 1.2
+    use_osrm_live: true
+    fallback_tortuosity_factor: 1.35  # ratio real road distance / haversine distance in Grand Tunis
+  speeds_kmh:
+    dense_urban: 20.0       # Centre-ville, Lafayette, Médina
+    periurban_mixed: 35.0   # Ennasr, Menzah, Lac 1/2
+    expressway: 65.0        # Route de La Marsa (RN9), Voie X, X20, Autoroute A1/Z4
+    blended_default: 28.0   # Default urban speed heuristic for Grand Tunis
+  rush_hours:
+    morning_start: 7.5      # 07:30
+    morning_end: 9.0        # 09:00
+    midday_start: 12.5      # 12:30 (schools, administrative offices lunch peak)
+    midday_end: 14.0        # 14:00
+    evening_start: 17.0     # 17:00
+    evening_end: 19.0       # 19:00
+  telemetry:
+    log_file: "data/interim/tunisia_telemetry_log.csv"
+    max_memory_buffer: 50
+

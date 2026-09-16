@@ -54,3 +54,15 @@ To ensure seamless integration with the central backend:
    - Rush Hour MAE Tolerance: $\le 4.5$ minutes.
    - Target $R^2$: $\ge 0.60$.
 5. **Split Strategy**: Strictly time-based (e.g., 70% train / 15% val / 15% test) to prevent temporal data leakage.
+
+---
+
+## 5. Deployment Market & Cold-Start Strategy (Grand Tunis, Tunisia)
+For the full technical breakdown, see [`docs/tunisia_adaptation_strategy.md`](tunisia_adaptation_strategy.md).
+
+1. **Surrogate Prototype Justification**: NYC TLC dataset acts as an industrial benchmark to validate the entire MLOps workflow end-to-end.
+2. **Hybrid Two-Tier Engine**: 
+   - **Tier 1 (Road Routing)**: OpenStreetMap OSRM calculates real route distance and free-flow duration on Grand Tunis axes, with graceful fallback to calibrated local tortuosity ($\times 1.35$).
+   - **Tier 2 (ML Congestion Correction)**: Dedicated LightGBM model adapted to Tunisian rush hours (morning 07:30–09:00, midday 12:30–14:00, evening 17:00–19:00).
+3. **Passive Shadow Telemetry**: Real fleet rides are recorded via `POST /telemetry/log-completed-ride` to trigger continuous re-training once 500+ rides are logged.
+

@@ -90,6 +90,23 @@ def add_distance_features(df: pd.DataFrame, config: Optional[dict] = None) -> pd
     return df
 
 
+def is_tunisian_rush_hour(dt: datetime) -> bool:
+    """Check if timestamp falls into Grand Tunis congestion windows:
+    - Morning school/work commute: 07:30 - 09:00
+    - Midday school/office rush: 12:30 - 14:00
+    - Evening commute: 17:00 - 19:00
+    Applies Monday to Friday (and Saturday midday).
+    """
+    weekday = dt.weekday()
+    if weekday == 6:  # Sunday
+        return False
+    time_float = dt.hour + dt.minute / 60.0
+    morning = 7.5 <= time_float <= 9.0 and weekday < 5
+    midday = 12.5 <= time_float <= 14.0
+    evening = 17.0 <= time_float <= 19.0 and weekday < 5
+    return bool(morning or midday or evening)
+
+
 def extract_features_for_inference(
     pickup_latitude: float,
     pickup_longitude: float,
@@ -97,6 +114,7 @@ def extract_features_for_inference(
     dropoff_longitude: float,
     pickup_datetime: Union[str, datetime],
     passenger_count: int = 1,
+    road_distance_km: Optional[float] = None,
 ) -> pd.DataFrame:
     """Prepare a single sample DataFrame adhering strictly to the training feature schema."""
     if isinstance(pickup_datetime, str):
@@ -112,6 +130,10 @@ def extract_features_for_inference(
     hav_km = float(haversine_distance_km(pickup_latitude, pickup_longitude, dropoff_latitude, dropoff_longitude))
     man_km = float(manhattan_distance_km(pickup_latitude, pickup_longitude, dropoff_latitude, dropoff_longitude))
 
+    # If road distance is explicitly supplied via OSRM, calibrate manhattan proxy if appropriate
+    if road_distance_km is not None and road_distance_km > 0:
+        man_km = float(road_distance_km)
+
     features = {
         "distance_haversine_km": [hav_km],
         "distance_manhattan_km": [man_km],
@@ -124,4 +146,5 @@ def extract_features_for_inference(
         "passenger_count": [passenger_count if passenger_count is not None else 1],
     }
     return pd.DataFrame(features)[FEATURE_NAMES]
+
 

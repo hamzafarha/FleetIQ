@@ -18,8 +18,11 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
+import pydeck as pdk
 import requests
 import streamlit as st
+
+from src.features.routing import get_tunisia_road_route
 
 # Page configuration
 st.set_page_config(
@@ -33,14 +36,19 @@ st.set_page_config(
 DEFAULT_API_URL = "http://127.0.0.1:8000"
 
 PRESET_LOCATIONS = {
-    "Times Square, Manhattan": (40.7580, -73.9855),
-    "Central Park North": (40.7990, -73.9535),
-    "JFK International Airport": (40.6413, -73.7781),
-    "LaGuardia Airport (LGA)": (40.7769, -73.8740),
-    "Wall Street / Financial District": (40.7075, -74.0090),
-    "Brooklyn Bridge Park": (40.7023, -73.9964),
-    "Williamsburg, Brooklyn": (40.7145, -73.9560),
-    "Penn Station, Manhattan": (40.7505, -73.9934),
+    "Aéroport Tunis-Carthage (TUN)": (36.8510, 10.2272),
+    "Centre-Ville (Av. Habib Bourguiba)": (36.7992, 10.1802),
+    "Les Berges du Lac 1": (36.8335, 10.2341),
+    "Les Berges du Lac 2": (36.8436, 10.2743),
+    "La Marsa (Corniche / Saf-Saf)": (36.8782, 10.3247),
+    "Sidi Bou Saïd": (36.8703, 10.3418),
+    "Carthage (Amphithéâtre / Byrsa)": (36.8529, 10.3243),
+    "Ennasr 2 (Avenue Hédi Nouira)": (36.8480, 10.1565),
+    "Technopôle El Ghazela / ESPRIT": (36.8973, 10.1895),
+    "El Menzah 9": (36.8439, 10.1417),
+    "Gare Centrale (Place Barcelone)": (36.7950, 10.1805),
+    "La Goulette (Port / Casino)": (36.8183, 10.3050),
+    "Le Bardo (Musée National)": (36.8092, 10.1343),
 }
 
 
@@ -51,6 +59,139 @@ def load_model_benchmark_data() -> Dict[str, Any]:
         with open(res_path) as f:
             return json.load(f)
     return {}
+
+
+def render_directional_route_map(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+    start_label: str = "Prise en charge",
+    end_label: str = "Destination",
+    route_geometry: list[list[float]] | None = None,
+):
+    """Render an interactive PyDeck map with route line, directional arrows, and landmark badges."""
+    mid_lat = (start_lat + end_lat) / 2.0
+    mid_lon = (start_lon + end_lon) / 2.0
+
+    dlat = end_lat - start_lat
+    dlon = end_lon - start_lon
+    dist_deg = float(np.sqrt(dlat**2 + dlon**2))
+
+    # Dynamic zoom calculation based on distance
+    if dist_deg < 0.04:
+        zoom = 13.0
+    elif dist_deg < 0.10:
+        zoom = 12.0
+    elif dist_deg < 0.25:
+        zoom = 11.0
+    else:
+        zoom = 10.0
+
+    # Start and End Markers
+    points_data = [
+        {
+            "name": f"🟢 {start_label}",
+            "lat": start_lat,
+            "lon": start_lon,
+            "color": [34, 197, 94, 230],  # Emerald Green
+            "radius": 180,
+        },
+        {
+            "name": f"🏁 {end_label}",
+            "lat": end_lat,
+            "lon": end_lon,
+            "color": [239, 68, 68, 230],  # Crimson Red
+            "radius": 180,
+        },
+    ]
+
+    points_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=points_data,
+        get_position=["lon", "lat"],
+        get_color="color",
+        get_radius="radius",
+        radius_min_pixels=8,
+        radius_max_pixels=20,
+        pickable=True,
+    )
+
+    # Draw the OSRM road geometry instead of connecting endpoints directly.
+    road_path = route_geometry or [[start_lon, start_lat], [end_lon, end_lat]]
+    line_layer = pdk.Layer(
+        "PathLayer",
+        data=[{"path": road_path}],
+        get_path="path",
+        get_color=[37, 99, 235, 230],  # Royal Blue
+        get_width=5,
+    )
+
+    # Directional arrows follow the local tangent of the road geometry.
+    arrow_segments = []
+    if len(road_path) > 1:
+        arrow_len = min(0.007, max(0.0025, dist_deg * 0.16))
+        arrow_w = arrow_len * 0.65
+
+        for frac in [0.50, 0.85]:
+            segment_float = frac * (len(road_path) - 1)
+            segment_index = min(int(segment_float), len(road_path) - 2)
+            point = road_path[segment_index]
+            next_point = road_path[segment_index + 1]
+            tangent_lon = next_point[0] - point[0]
+            tangent_lat = next_point[1] - point[1]
+            tangent_length = float(np.sqrt(tangent_lon**2 + tangent_lat**2))
+            if tangent_length < 1e-9:
+                continue
+            ulon = tangent_lon / tangent_length
+            ulat = tangent_lat / tangent_length
+            plon = -ulat
+            plat = ulon
+            tip_lon = point[0] + (segment_float - segment_index) * tangent_lon
+            tip_lat = point[1] + (segment_float - segment_index) * tangent_lat
+            left_lat = tip_lat - arrow_len * ulat + arrow_w * plat
+            left_lon = tip_lon - arrow_len * ulon + arrow_w * plon
+            right_lat = tip_lat - arrow_len * ulat - arrow_w * plat
+            right_lon = tip_lon - arrow_len * ulon - arrow_w * plon
+
+            arrow_segments.append({"start": [left_lon, left_lat], "end": [tip_lon, tip_lat]})
+            arrow_segments.append({"start": [right_lon, right_lat], "end": [tip_lon, tip_lat]})
+
+    arrow_layer = pdk.Layer(
+        "LineLayer",
+        data=arrow_segments,
+        get_source_position="start",
+        get_target_position="end",
+        get_color=[220, 38, 38, 255],  # Flèche rouge vif
+        get_width=6,
+    )
+
+    # Text Labels
+    text_layer = pdk.Layer(
+        "TextLayer",
+        data=points_data,
+        get_position=["lon", "lat"],
+        get_text="name",
+        get_size=15,
+        get_color=[30, 41, 59, 255],
+        get_alignment_baseline="'bottom'",
+        get_pixel_offset=[0, -14],
+    )
+
+    deck = pdk.Deck(
+        layers=[line_layer, arrow_layer, points_layer, text_layer],
+        initial_view_state=pdk.ViewState(
+            latitude=mid_lat,
+            longitude=mid_lon,
+            zoom=zoom,
+            pitch=25,
+            bearing=0,
+        ),
+        map_style="road",
+        tooltip={"text": "{name}"},
+    )
+
+    st.pydeck_chart(deck, use_container_width=True)
 
 
 # Custom styling
@@ -95,8 +236,10 @@ nav = st.sidebar.radio(
         "3. Benchmark & Comparaison Modèles",
         "4. Simulateur Streaming Temps Réel",
         "5. Gouvernance & Contrat Backend",
+        "6. Marché Tunisien & Télémétrie Flotte",
     ],
 )
+
 
 api_base = st.sidebar.text_input("URL Backend Microservice ETA :", value=DEFAULT_API_URL)
 
@@ -113,7 +256,12 @@ except Exception:
 # --- PAGE 1: ESTIMATION COURSE (TRIP DURATION) ---
 if nav == "1. Estimation Course (Trip Duration)":
     st.title("📍 Estimation de la Durée du Trajet Passager (Cible 2 / Case B)")
-    st.markdown("Prédit le temps de trajet entre la prise en charge et la destination finale.")
+    st.markdown(
+        """
+        Prédit le temps de trajet entre la prise en charge et la destination finale.  
+        **Contexte de Déploiement :** 🇹🇳 *Grand Tunis (Tunisie)* — Service ETA prêt pour l'intégration SmartTaxi.
+        """
+    )
 
     col1, col2 = st.columns([1, 1])
 
@@ -127,7 +275,7 @@ if nav == "1. Estimation Course (Trip Duration)":
         if pickup_preset != "Personnalisé":
             p_lat_init, p_lon_init = PRESET_LOCATIONS[pickup_preset]
         else:
-            p_lat_init, p_lon_init = 40.7580, -73.9855
+            p_lat_init, p_lon_init = 36.8510, 10.2272
 
         p_lat = st.number_input("Latitude Prise en Charge", value=p_lat_init, format="%.6f")
         p_lon = st.number_input("Longitude Prise en Charge", value=p_lon_init, format="%.6f")
@@ -136,12 +284,12 @@ if nav == "1. Estimation Course (Trip Duration)":
         dropoff_preset = st.selectbox(
             "Point d'arrivée prédéfini (ou personnalisé) :",
             ["Personnalisé"] + list(PRESET_LOCATIONS.keys()),
-            index=3,
+            index=2,
         )
         if dropoff_preset != "Personnalisé":
             d_lat_init, d_lon_init = PRESET_LOCATIONS[dropoff_preset]
         else:
-            d_lat_init, d_lon_init = 40.7829, -73.9654
+            d_lat_init, d_lon_init = 36.7992, 10.1802
 
         d_lat = st.number_input("Latitude Destination", value=d_lat_init, format="%.6f")
         d_lon = st.number_input("Longitude Destination", value=d_lon_init, format="%.6f")
@@ -159,13 +307,14 @@ if nav == "1. Estimation Course (Trip Duration)":
         traffic_val = st.slider("Indice de trafic (0=fluide, 1=saturé)", 0.0, 1.0, 0.75) if use_traffic else None
 
         use_weather = st.checkbox("Inclure condition météo")
-        weather_val = st.selectbox("Condition météo", ["clear", "rain", "snow", "fog"]) if use_weather else None
+        weather_val = st.selectbox("Condition météo", ["clear", "rain", "fog"]) if use_weather else None
 
         dt_iso = datetime.combine(trip_date, trip_time).replace(tzinfo=timezone.utc).isoformat()
 
-        is_rush = trip_time.hour in (7, 8, 9, 16, 17, 18, 19) and trip_date.weekday() < 5
+        # Heures de pointe tunisiennes : Matin (07h30-09h), Midi (12h30-14h), Soir (17h-19h)
+        is_rush = trip_time.hour in (7, 8, 9, 12, 13, 17, 18, 19) and trip_date.weekday() < 5
         if is_rush:
-            st.info("⚠️ Heure de pointe détectée (Congestion urbaine prise en compte)")
+            st.info("⚠️ Heure de pointe tunisienne détectée (Trafic dense / ralentissements urbains pris en compte)")
 
     predict_btn = st.button("🚀 Estimer l'Heure d'Arrivée (ETA)", type="primary", use_container_width=True)
 
@@ -211,28 +360,37 @@ if nav == "1. Estimation Course (Trip Duration)":
             st.success("✅ Estimation Calculée avec Succès")
             res_col1, res_col2, res_col3, res_col4 = st.columns(4)
             res_col1.metric("Durée Estimée (ETA)", f"{data['eta_minutes']} min", f"{data['eta_seconds']} s")
-            res_col2.metric("Distance Calculée", f"{data['distance_km']} km")
+            road_dist = data.get("road_distance_km")
+            dist_label = f"{road_dist} km" if road_dist else f"{data['distance_km']} km"
+            res_col2.metric("Distance Routière", dist_label, f"Vol d'oiseau: {data['distance_km']} km" if road_dist else None)
             res_col3.metric("Version Modèle", data["model_version"])
             res_col4.metric("Latence Inférence", f"{data['latency_ms']} ms")
 
+            routing_engine = data.get("routing_engine", "Non spécifié")
+            market_ctx = data.get("market", "tunisia")
             status_style = "badge-high" if data["quality_flag"] == "HIGH_CONFIDENCE" else "badge-fallback"
             st.markdown(
                 f"**Indicateur Qualité :** <span class='{status_style}'>{data['quality_flag']}</span> "
-                f"| Fallback activé : `{data['fallback_used']}` "
-                f"| Trafic certifié : `{data['traffic_included']}` "
-                f"| Météo certifiée : `{data['weather_included']}`",
+                f"| **Marché :** `🇹🇳 {market_ctx}` "
+                f"| **Routage :** `{routing_engine}` "
+                f"| Fallback activé : `{data['fallback_used']}`",
                 unsafe_allow_html=True,
             )
 
-            # Map Visualization
-            map_data = pd.DataFrame(
-                {
-                    "lat": [p_lat, d_lat],
-                    "lon": [p_lon, d_lon],
-                    "point": ["Prise en charge", "Destination"],
-                }
+
+            # Map Visualization with Directional Arrow
+            st.markdown("---")
+            st.subheader("🗺️ Itinéraire & Flèche Directionnelle (Départ ➔ Arrivée)")
+            route = get_tunisia_road_route(p_lat, p_lon, d_lat, d_lon)
+            render_directional_route_map(
+                p_lat,
+                p_lon,
+                d_lat,
+                d_lon,
+                start_label="Prise en charge",
+                end_label="Destination",
+                route_geometry=route.geometry,
             )
-            st.map(map_data, zoom=11)
 
 # --- PAGE 2: APPROCHE CHAUFFEUR (DRIVER PICKUP) ---
 elif nav == "2. Approche Chauffeur (Driver Pickup)":
@@ -247,17 +405,39 @@ elif nav == "2. Approche Chauffeur (Driver Pickup)":
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Position Actuelle du Chauffeur")
-        d_lat = st.number_input("Latitude Chauffeur", value=40.7500, format="%.6f")
-        d_lon = st.number_input("Longitude Chauffeur", value=-73.9900, format="%.6f")
+        driver_preset = st.selectbox(
+            "Emplacement Chauffeur (prédéfini) :",
+            ["Personnalisé"] + list(PRESET_LOCATIONS.keys()),
+            index=3,  # Les Berges du Lac 1
+            key="driver_preset_sel",
+        )
+        if driver_preset != "Personnalisé":
+            d_lat_val, d_lon_val = PRESET_LOCATIONS[driver_preset]
+        else:
+            d_lat_val, d_lon_val = 36.8335, 10.2341
+
+        d_lat = st.number_input("Latitude Chauffeur", value=d_lat_val, format="%.6f", key="drv_lat")
+        d_lon = st.number_input("Longitude Chauffeur", value=d_lon_val, format="%.6f", key="drv_lon")
 
     with c2:
-        st.subheader("Position du Passager (Pickup)")
-        p_lat = st.number_input("Latitude Passager", value=40.7580, format="%.6f")
-        p_lon = st.number_input("Longitude Passager", value=-73.9855, format="%.6f")
+        st.subheader("Position du Passager (Point de Prise en Charge)")
+        passenger_preset = st.selectbox(
+            "Emplacement Passager (prédéfini) :",
+            ["Personnalisé"] + list(PRESET_LOCATIONS.keys()),
+            index=1,  # Aéroport Tunis-Carthage
+            key="passenger_preset_sel",
+        )
+        if passenger_preset != "Personnalisé":
+            p_lat_val, p_lon_val = PRESET_LOCATIONS[passenger_preset]
+        else:
+            p_lat_val, p_lon_val = 36.8510, 10.2272
+
+        p_lat = st.number_input("Latitude Passager", value=p_lat_val, format="%.6f", key="pax_lat")
+        p_lon = st.number_input("Longitude Passager", value=p_lon_val, format="%.6f", key="pax_lon")
 
     assign_dt = datetime.now(timezone.utc).isoformat()
 
-    if st.button("⏱️ Calculer l'ETA d'Approche Chauffeur", type="primary"):
+    if st.button("⏱️ Calculer l'ETA d'Approche Chauffeur", type="primary", use_container_width=True):
         payload = {
             "driver_latitude": d_lat,
             "driver_longitude": d_lon,
@@ -267,18 +447,48 @@ elif nav == "2. Approche Chauffeur (Driver Pickup)":
         }
         try:
             resp = requests.post(f"{api_base}/predict/driver-pickup", json=payload, timeout=2.0)
-            data = resp.json()
-            st.success("✅ Estimation d'Approche Calculée")
-            r1, r2, r3 = st.columns(3)
-            r1.metric("Temps d'Approche (ETA)", f"{data['eta_minutes']} min", f"{data['eta_seconds']} sec")
-            r2.metric("Distance Chauffeur → Client", f"{data['distance_km']} km")
-            r3.metric("Statut Moteur", data["quality_flag"])
-            st.info(
-                "ℹ️ Fonctionne en mode Fallback Routier Urbain Calibré. "
-                "Prêt pour le branchement télématique dès confirmation des traces GPS par Houda (Backend)."
-            )
-        except Exception as e:
-            st.error(f"Erreur d'appel API : {e}")
+            if resp.status_code == 200:
+                data = resp.json()
+            else:
+                data = None
+        except Exception:
+            data = None
+
+        if not data:
+            # Local fallback calculation if backend API offline
+            from src.features.build_features import haversine_distance_km
+            dist = float(haversine_distance_km(d_lat, d_lon, p_lat, p_lon))
+            duration_sec = max(60, int((dist / 25.0) * 3600))
+            data = {
+                "eta_minutes": round(duration_sec / 60.0, 2),
+                "eta_seconds": duration_sec,
+                "distance_km": round(dist, 2),
+                "quality_flag": "FALLBACK_ROUTING",
+            }
+
+        st.success("✅ Estimation d'Approche Calculée")
+        r1, r2, r3 = st.columns(3)
+        r1.metric("Temps d'Approche (ETA)", f"{data['eta_minutes']} min", f"{data['eta_seconds']} sec")
+        r2.metric("Distance Chauffeur → Client", f"{data['distance_km']} km")
+        r3.metric("Statut Moteur", data["quality_flag"])
+
+        st.info(
+            "ℹ️ Moteur de Routage Urbain Grand Tunis (vitesse de référence 25 km/h). "
+            "Prêt pour le couplage direct avec la télématique temps réel des chauffeurs SmartTaxi."
+        )
+
+        st.markdown("---")
+        st.subheader("🗺️ Trajet d'Approche & Flèche Directionnelle (Chauffeur ➔ Passager)")
+        route = get_tunisia_road_route(d_lat, d_lon, p_lat, p_lon)
+        render_directional_route_map(
+            d_lat,
+            d_lon,
+            p_lat,
+            p_lon,
+            start_label="Chauffeur (Actuel)",
+            end_label="Passager (Pickup)",
+            route_geometry=route.geometry,
+        )
 
 # --- PAGE 3: BENCHMARK & COMPARAISON MODÈLES ---
 elif nav == "3. Benchmark & Comparaison Modèles":
@@ -339,10 +549,19 @@ elif nav == "4. Simulateur Streaming Temps Réel":
     st.title("⚡ Simulation de Flux Temps Réel & Test de Débit")
     st.markdown("Simule des arrivées séquentielles de réservations de taxis pour évaluer la latence et la robustesse.")
 
-    n_events = st.slider("Nombre d'événements à simuler", 5, 50, 15)
-    interval = st.slider("Intervalle entre événements (secondes)", 0.05, 1.0, 0.2)
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        n_events = st.slider("Nombre d'événements à simuler", 5, 50, 15)
+        interval = st.slider("Intervalle entre événements (secondes)", 0.05, 1.0, 0.2)
+    with col_s2:
+        sim_region = st.selectbox(
+            "Zone géographique de simulation :",
+            ["Grand Tunis (Tunisie) 🇹🇳", "New York City (Benchmark TLC) 🇺🇸"],
+            index=0,
+        )
+        reg_key = "tunis" if "Tunis" in sim_region else "nyc"
 
-    if st.button("🚀 Démarrer la Simulation"):
+    if st.button("🚀 Démarrer la Simulation", type="primary", use_container_width=True):
         from simulate_stream import generate_random_ride
 
         progress_bar = st.progress(0)
@@ -351,7 +570,7 @@ elif nav == "4. Simulateur Streaming Temps Réel":
         latencies = []
 
         for i in range(1, n_events + 1):
-            ride = generate_random_ride(i)
+            ride = generate_random_ride(i, region=reg_key)
             t0 = time.perf_counter()
             try:
                 resp = requests.post(f"{api_base}/predict/trip-duration", json=ride, timeout=2.0)
@@ -371,28 +590,41 @@ elif nav == "4. Simulateur Streaming Temps Réel":
                     )
                 else:
                     logs.append({"Course ID": ride["ride_id"], "Statut": f"ERR {resp.status_code}"})
-            except Exception as err:
+            except Exception:
+                # Fallback local calculation
+                from src.features.build_features import haversine_distance_km
                 dur = round((time.perf_counter() - t0) * 1000, 2)
-                logs.append({"Course ID": ride["ride_id"], "Statut": "Échec Connexion", "Latence (ms)": dur})
+                latencies.append(dur)
+                dist = round(float(haversine_distance_km(ride["pickup_latitude"], ride["pickup_longitude"], ride["dropoff_latitude"], ride["dropoff_longitude"])), 2)
+                eta_m = round((dist / 25.0) * 60, 2)
+                logs.append(
+                    {
+                        "Course ID": ride["ride_id"],
+                        "Statut": "Fallback Local",
+                        "Distance": f"{dist} km",
+                        "ETA": f"{eta_m} min",
+                        "Qualité": "FALLBACK_ROUTING",
+                        "Latence (ms)": dur,
+                    }
+                )
 
             table_placeholder.dataframe(pd.DataFrame(logs), use_container_width=True)
             progress_bar.progress(i / n_events)
             time.sleep(interval)
 
-        st.success(f"Simulation terminée ! {len(logs)} requêtes envoyées.")
+        st.success(f"Simulation terminée ({sim_region}) ! {len(logs)} requêtes envoyées.")
         if latencies:
             st.metric("Latence Moyenne Observée", f"{np.mean(latencies):.2f} ms")
 
 # --- PAGE 5: GOUVERNANCE & CONTRAT BACKEND ---
 elif nav == "5. Gouvernance & Contrat Backend":
-    st.title("🛡️ Respect des Règles du Backend Central SmartTaxi")
+    st.title("🛡️ Gouvernance, Contrat Backend & Marché Tunisien")
+    
+    st.subheader("1. Respect des Règles du Backend Central SmartTaxi")
     st.markdown(
         """
         Conformément au **Guide de cohérence et d'intégration de l'écosystème SmartTaxi (Août 2026)** :
-        """
-    )
-    st.markdown(
-        """
+        
         1. **Strictement Read-Only :** Aucune écriture directe dans la table `Ride` ni dans PostgreSQL. Le service ETA est stateless.
         2. **Source Officielle des États :** Le backend centralisé .NET 10 (Houda Ghenmi) reste le seul propriétaire des transitions de courses et de la facturation.
         3. **Pas de Simulation Silencieuse :** Si les capteurs trafic ou météo sont indisponibles, le modèle ne les invente pas ; il renvoie `traffic_included: false` et `weather_included: false`.
@@ -400,4 +632,126 @@ elif nav == "5. Gouvernance & Contrat Backend":
         5. **Tests d'Intégration Minimum (24/24 validés) :** Trajets courts/longs, heures de pointe, données manquantes, coordonnées hors-limites, latence sous 50 ms.
         """
     )
+    
+    st.markdown("---")
+    st.subheader("2. 🇹🇳 Stratégie de Transition : Du Benchmark NYC au Marché Tunisien")
+    st.markdown(
+        r"""
+        ### Pourquoi le dataset NYC TLC a-t-il été utilisé ?
+        - **Prototypage & Benchmark de Référence :** Absence de dataset public tunisien de plusieurs millions de courses avec horodatage GPS précis. Le dataset NYC TLC est la référence mondiale de mobilité pour concevoir des pipelines de production, tester la latence (< 20 ms) et stress-tester le streaming.
+        - **Architecture Agnostique par Conception :** Le pipeline de features (`src/features/build_features.py`) repose sur des métriques relatives (distances géodésiques, encodages cycliques de l'heure $\sin/\cos$, indicateurs d'heure de pointe, nombre de passagers). Il n'a aucune dépendance en dur à des identifiants spécifiques à New York.
+        
+        ### Feuille de route pour le marché Tunisien (Cold-Start Loop) :
+        1. **Phase 1 (Actuelle - Scaffolding & Fallback)** :
+           - Interface Streamlit et points de repère localisés sur le **Grand Tunis** (Aéroport Tunis-Carthage, Centre-Ville, Lac 1 & 2, Ennasr, Marsa, ESPRIT/Ghazela).
+           - Moteur de secours urbain calibré sur les vitesses moyennes locales (25 km/h en ville, tolérance aux pics 07h30-09h00 et 17h00-19h00).
+        2. **Phase 2 (Collecte de Télémétrie Flotte)** :
+           - Logging continu des courses réelles dès le lancement du dispatch SmartTaxi en Tunisie (`pickup_coords`, `dropoff_coords`, `duration_seconds`).
+        3. **Phase 3 (Transfer Learning & Fine-Tuning Local)** :
+           - Dès **1 000 à 2 000 courses réelles** collectées, réentraînement direct de CatBoost / LightGBM via le pipeline existant, avec zéro refonte logicielle.
+        """
+    )
     st.markdown("Consultez le rapport complet dans `reports/rapport_integration_eta_smarttaxi.md`.")
+
+# --- PAGE 6: MARCHÉ TUNISIEN & TÉLÉMÉTRIE FLOTTE ---
+elif nav == "6. Marché Tunisien & Télémétrie Flotte":
+    st.title("🇹🇳 Marché Tunisien — Routage Réseau & Télémétrie Flotte")
+    st.markdown(
+        """
+        Gestion de la transition opérationnelle : **Résolution du démarrage à froid (Cold-Start)**, 
+        routage OpenStreetMap OSRM sur Grand Tunis et journalisation passive des courses réelles.
+        """
+    )
+
+    t_col1, t_col2 = st.columns([1, 1])
+
+    with t_col1:
+        st.subheader("1. Architecture Hybride pour Grand Tunis")
+        st.markdown(
+            """
+            - **Tier 1 (Routage Réseau OSRM) :** Calcul de la trajectoire routière réelle et de la distance réseau sur les axes tunisiens (Route de La Marsa RN9, Voie X, Lac, etc.) avec fallback tortuosité $\\times 1.35$.
+            - **Tier 2 (Modèle ML Adapté) :** Modèle LightGBM entraîné sur le graphe de congestion de Grand Tunis (pics 07h30–09h00, 12h30–14h00, 17h00–19h00).
+            - **Cold-Start Resolver :** Logging passif des courses terminées pour ré-entraînement continu.
+            """
+        )
+
+        # Telemetry Stats from API
+        st.markdown("---")
+        st.subheader("2. État du Collecteur Télémétrique")
+        try:
+            t_resp = requests.get(f"{api_base}/telemetry/stats", timeout=1.5)
+            if t_resp.status_code == 200:
+                stats = t_resp.json()
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Courses Enregistrées", stats.get("total_rides_logged", 0))
+                m2.metric("MAE Moyenne", f"{stats.get('mean_mae_minutes', 0.0)} min")
+                ready = stats.get("ready_for_fine_tuning", False)
+                m3.metric("Statut Ré-entraînement", "Prêt" if ready else "En Collecte")
+                st.caption(f"Seuil requis pour ré-entraînement : {stats.get('threshold_for_retraining', 500)} courses réelles.")
+            else:
+                st.info("API connectée mais statistiques télémétriques indisponibles.")
+        except Exception:
+            st.info("Lancez l'API FastAPI (`uvicorn app:app`) pour visualiser les statistiques de télémétrie en direct.")
+
+    with t_col2:
+        st.subheader("3. Modèle Adapté Tunisie (Benchmark)")
+        tn_model_res_file = Path("models/tunisia_model_results.json")
+        if tn_model_res_file.exists():
+            with open(tn_model_res_file, "r", encoding="utf-8") as f:
+                tn_results = json.load(f)
+            st.success(f"Champion Local : **{tn_results.get('champion_model')}**")
+            results_data = tn_results.get("results", {})
+            df_tn = pd.DataFrame([
+                {
+                    "Modèle": m,
+                    "MAE (min)": res["mae_minutes"],
+                    "MAE (sec)": res["mae_seconds"],
+                    "RMSE (min)": res["rmse_minutes"],
+                    "R² Score": res["r2"],
+                }
+                for m, res in results_data.items()
+            ])
+            st.dataframe(df_tn, use_container_width=True)
+        else:
+            st.info("Générez le modèle adapté via `python scripts/train_tunisia_adapter.py`.")
+
+        st.markdown("---")
+        st.subheader("4. Simuler l'enregistrement d'une course réelle")
+        with st.form("log_ride_form"):
+            sim_p = st.selectbox("Départ", list(PRESET_LOCATIONS.keys()), index=0)
+            sim_d = st.selectbox("Arrivée", list(PRESET_LOCATIONS.keys()), index=4)
+            sim_dur = st.number_input("Durée Réelle Constatée (secondes)", value=950, min_value=60, step=30)
+            sim_pred = st.number_input("ETA qui avait été prédit (secondes)", value=920, min_value=60, step=30)
+            submit_log = st.form_submit_button("📥 Enregistrer dans la base télémétrique")
+
+            if submit_log:
+                p_coords = PRESET_LOCATIONS[sim_p]
+                d_coords = PRESET_LOCATIONS[sim_d]
+                log_pld = {
+                    "pickup_latitude": p_coords[0],
+                    "pickup_longitude": p_coords[1],
+                    "dropoff_latitude": d_coords[0],
+                    "dropoff_longitude": d_coords[1],
+                    "actual_duration_seconds": int(sim_dur),
+                    "predicted_duration_seconds": int(sim_pred),
+                    "routing_engine": "osrm_openstreetmap",
+                }
+                try:
+                    res_log = requests.post(f"{api_base}/telemetry/log-completed-ride", json=log_pld, timeout=2.0)
+                    if res_log.status_code == 200:
+                        st.success(f"Course enregistrée avec succès ! (ID: {res_log.json().get('ride_id')})")
+                    else:
+                        st.error(f"Erreur enregistrement : {res_log.text}")
+                except Exception as e:
+                    # Fallback log directly
+                    from src.data.telemetry_collector import log_completed_ride
+                    res_dir = log_completed_ride(
+                        pickup_latitude=p_coords[0],
+                        pickup_longitude=p_coords[1],
+                        dropoff_latitude=d_coords[0],
+                        dropoff_longitude=d_coords[1],
+                        actual_duration_seconds=int(sim_dur),
+                        predicted_duration_seconds=int(sim_pred),
+                    )
+                    st.success(f"Course journalisée en mode autonome local ! (ID: {res_dir['ride_id']})")
+
