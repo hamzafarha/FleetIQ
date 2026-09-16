@@ -198,6 +198,48 @@ def render_directional_route_map(
 st.markdown(
     """
     <style>
+    [data-testid="stSidebarCollapseButton"] {
+        display: flex !important;
+        visibility: visible !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] button {
+        visibility: visible !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+        font-size: 0 !important;
+        line-height: 1 !important;
+    }
+
+    [data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"]::after {
+        content: "‹";
+        font-family: Arial, sans-serif;
+        font-size: 28px;
+        font-weight: 700;
+    }
+
+    [data-testid="stExpandSidebarButton"] {
+        display: flex !important;
+        visibility: visible !important;
+    }
+
+    [data-testid="stExpandSidebarButton"] button {
+        visibility: visible !important;
+    }
+
+    [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {
+        font-size: 0 !important;
+        line-height: 1 !important;
+    }
+
+    [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"]::after {
+        content: "›";
+        font-family: Arial, sans-serif;
+        font-size: 28px;
+        font-weight: 700;
+    }
+
     .metric-card {
         background-color: #f8f9fa;
         border-radius: 8px;
